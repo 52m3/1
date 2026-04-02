@@ -171,10 +171,14 @@ end
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
-local correctPlaceId = 4991214437
+local allowedGames = {
+    [4991214437] = true,
+    [6652350934] = true,
+	[71600459831333] = true
+}
 
-if game.PlaceId ~= correctPlaceId then
-    player:Kick("Wrong game!")
+if not allowedGames[game.PlaceId] then
+     player:Kick("Wrong game!")
 end
 
 
