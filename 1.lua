@@ -3914,8 +3914,8 @@ H:Dropdown({
         "Bell",
         "Bubble",
         "Meow",
-        "Custom",
-		"Rust"
+        "Rust",
+		"Custom"
     },
     Default = "NeverLose",
     Callback = function(v)
