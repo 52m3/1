@@ -30,7 +30,7 @@ print([[
 ==========================================================
 |                      withdraw.cc                       |
 |--------------------------------------------------------|
-| Version: v1.29                                         |
+| Version: v1.30                                         |
 |                                                        |
 |                                                        |
 |                                                        |
@@ -2753,6 +2753,22 @@ CS:Toggle({
 end
 
 do
+	--// SILENT AIM SNAPLINES
+silentAim.snaplines = {
+    enabled = false,
+    color = Color3.fromRGB(255,100,100),
+    thickness = 2,
+    origin = "Center"
+}
+
+if typeof(Drawing) == "table" then
+    silentAim.snapline = Drawing.new("Line")
+    silentAim.snapline.Visible = false
+    silentAim.snapline.Thickness = silentAim.snaplines.thickness
+    silentAim.snapline.Color = silentAim.snaplines.color
+    silentAim.snapline.Transparency = 1
+end
+
     local L = SilentTab:Section({Name="Silent Aim | Core", Side="Left"})
     L:Toggle({Name="Enabled", Flag="KW_SA_EN", Default=false, Callback=function(v) silentAim.enabled=v end})
     L:Toggle({Name="Hold RMB", Flag="KW_SA_HOLD", Default=false, Callback=function(v) silentAim.holdToUse=v end})
@@ -2777,6 +2793,29 @@ do
             end
         end
     })
+
+	local V = SilentTab:Section({Name="Silent Aim | Visuals", Side="Right"})
+
+V:Toggle({
+    Name = "Snaplines",
+    Flag = "KW_SA_SNAP",
+    Default = false,
+    Callback = function(v)
+        silentAim.snaplines.enabled = v
+    end
+})
+
+V:Colorpicker({
+    Name = "Snapline Color",
+    Flag = "KW_SA_SNAP_COL",
+    Default = Color3.fromRGB(255,100,100),
+    Callback = function(c)
+        silentAim.snaplines.color = c
+        if silentAim.snapline then
+            silentAim.snapline.Color = c
+        end
+    end
+})
 
 
     local F = SilentTab:Section({Name="Silent Aim | Filters", Side="Right"})
@@ -2826,38 +2865,49 @@ end
 RunService.RenderStepped:Connect(function()
     if not silentAim.enabled then
         silentAim.FinalTarget = nil
-        if aim.fovCircle then aim.fovCircle.Visible = (aim.enabled or silentAim.enabled) and not getgenv().KW_HIDE_FOV end
+
+        if aim.fovCircle then
+            aim.fovCircle.Visible = (aim.enabled or silentAim.enabled) and not getgenv().KW_HIDE_FOV
+        end
+
+        if silentAim.snapline then
+            silentAim.snapline.Visible = false
+        end
+
         return
     end
 
     local mousePos = UIS:GetMouseLocation()
 
-    -- Validate existing target
+    -- VALIDATE TARGET
     local isFinalTargetValid = false
     local current = silentAim.FinalTarget
+
     if current and current.Character then
         local char = current.Character
         local hum = char:FindFirstChildOfClass("Humanoid")
+
         local targetPart = silentAim.targetPart
+        if silentAim.rage.enabled and silentAim.rage.headOnly then
+            targetPart = "Head"
+        end
 
-if silentAim.rage.enabled and silentAim.rage.headOnly then
-    targetPart = "Head"
-end
+        local part = char:FindFirstChild(targetPart) or char:FindFirstChild("HumanoidRootPart")
 
-local part = char:FindFirstChild(targetPart) or char:FindFirstChild("HumanoidRootPart")
         if hum and validSilentHealth(hum) and part then
             local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
             local distToMouse = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-            if onScreen 
-            and distToMouse <= silentAim.fov 
-            and (not silentAim.wallCheck or silentCanSee(char)) 
+
+            if onScreen
+            and distToMouse <= silentAim.fov
+            and (not silentAim.wallCheck or silentCanSee(char))
             and not char:FindFirstChild("ForceField") then
                 isFinalTargetValid = true
             end
         end
     end
 
-    -- Pick new target if current is invalid
+    -- FIND NEW TARGET
     if not isFinalTargetValid then
         silentAim.FinalTarget = nil
 
@@ -2879,12 +2929,15 @@ local part = char:FindFirstChild(targetPart) or char:FindFirstChild("HumanoidRoo
 
                     if hum and validSilentHealth(hum) and part and not char:FindFirstChild("ForceField") then
                         local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+
                         if onScreen then
                             local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+
                             if silentAim.rage.enabled or dist <= silentAim.fov then
                                 if silentAim.rage.enabled and silentAim.rage.ignoreWalls
-or not silentAim.wallCheck
-or silentCanSee(char) then
+                                or not silentAim.wallCheck
+                                or silentCanSee(char) then
+
                                     if dist < bestDist then
                                         bestDist = dist
                                         bestTarget = Player
@@ -2900,11 +2953,51 @@ or silentCanSee(char) then
         end
     end
 
-    -- Update FOV circle
+    --// SNAPLINES (FIXED - ALWAYS RUNS)
+    if silentAim.snapline then
+        if silentAim.enabled
+        and silentAim.snaplines.enabled
+        and silentAim.FinalTarget
+        and silentAim.FinalTarget.Character then
+
+            local char = silentAim.FinalTarget.Character
+            local part = char:FindFirstChild(silentAim.targetPart)
+                or char:FindFirstChild("HumanoidRootPart")
+
+            if part then
+                local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
+
+                if onScreen then
+                    local viewport = Camera.ViewportSize
+
+                    local from
+                    if silentAim.snaplines.origin == "Bottom" then
+                        from = Vector2.new(viewport.X/2, viewport.Y)
+                    elseif silentAim.snaplines.origin == "Top" then
+                        from = Vector2.new(viewport.X/2, 0)
+                    else
+                        from = Vector2.new(viewport.X/2, viewport.Y/2)
+                    end
+
+                    silentAim.snapline.From = from
+                    silentAim.snapline.To = Vector2.new(pos.X, pos.Y)
+                    silentAim.snapline.Visible = true
+                else
+                    silentAim.snapline.Visible = false
+                end
+            else
+                silentAim.snapline.Visible = false
+            end
+        else
+            silentAim.snapline.Visible = false
+        end
+    end
+
+    -- FOV CIRCLE
     if aim.fovCircle then
         aim.fovCircle.Radius = silentAim.enabled and silentAim.fov or aim.fov
         aim.fovCircle.Visible = (aim.enabled or silentAim.enabled) and not getgenv().KW_HIDE_FOV
-        aim.fovCircle.Position = UIS:GetMouseLocation()
+        aim.fovCircle.Position = mousePos
     end
 end)
 
