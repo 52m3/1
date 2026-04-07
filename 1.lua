@@ -30,7 +30,7 @@ print([[
 ==========================================================
 |                      withdraw.cc                       |
 |--------------------------------------------------------|
-| Version: v1.28                                         |
+| Version: v1.29                                         |
 |                                                        |
 |                                                        |
 |                                                        |
@@ -184,6 +184,7 @@ end
 
 if getgenv().KittenWareLoaded or getgenv().KittenWareLoading then return end
 getgenv().KittenWareLoading = true
+getgenv().KW_HIDE_FOV = false
 
 ----------------------------------------------------------------
 -- Services & Locals
@@ -216,7 +217,7 @@ GUI:Notify("Adonis", "Bypassed", 2)
 -- Tabs
 local MainUI = GUI:Load({
     sizex = 520,
-    sizey = 650
+    sizey = 670
 })
 local Combat   = MainUI:Tab("Aim")
 local SilentTab = MainUI:Tab("Silent")
@@ -1067,6 +1068,20 @@ do
   P:Toggle({Name="Rainbow ESP", Flag="KW_ESP_RAINBOW", Default=esp.rainbowESP, Callback=function(v) esp.rainbowESP=v end})
   P:Slider({Name="Rainbow Speed", Flag="KW_ESP_RAINBOW_SPD", Default=math.floor(esp.rainbowSpeed*10), Min=1, Max=5, Callback=function(v) esp.rainbowSpeed=v/10 end})
 
+	local V = ESPTab:Section({Name="Visuals | Misc", Side="Right"})
+
+  V:Toggle({
+    Name = "Hide FOV Circle",
+    Flag = "KW_HIDE_FOV",
+    Default = false,
+    Callback = function(v)
+        getgenv().KW_HIDE_FOV = v
+
+        if aim and aim.fovCircle then
+            aim.fovCircle.Visible = not v and (aim.enabled or silentAim.enabled)
+        end
+    end
+})
 
   local D = ESPTab:Section({Name="Drones", Side="Left"})
   D:Toggle({Name="Enable Drone ESP", Flag="KW_DR_EN", Default=esp.droneEnabled, Callback=function(v) esp.droneEnabled=v end})
@@ -1202,7 +1217,7 @@ UIS.InputBegan:Connect(function(i, gpe)
     -- Regular Aim toggle
     if i.KeyCode == aim.toggleKey then
         aim.enabled = not aim.enabled
-        if aim.fovCircle then aim.fovCircle.Visible = aim.enabled or silentAim.enabled end
+        if aim.fovCircle then aim.fovCircle.Visible = (aim.enabled or silentAim.enabled) and not getgenv().KW_HIDE_FOV end
         if not aim.enabled then aim.currentPart = nil end
     end
 
@@ -1214,7 +1229,7 @@ UIS.InputBegan:Connect(function(i, gpe)
         end
         -- Always update FOV circle visibility
         if aim.fovCircle then
-            aim.fovCircle.Visible = aim.enabled or silentAim.enabled
+            aim.fovCircle.Visible = (aim.enabled or silentAim.enabled) and not getgenv().KW_HIDE_FOV
         end
     end
 
@@ -1272,10 +1287,21 @@ local function validSilentTarget(player)
     return true
 end
 
+local function isHoldingTool()
+    local char = game.Players.LocalPlayer.Character
+    if not char then return false end
+
+    return char:FindFirstChildOfClass("Tool") ~= nil
+end
+
 task.spawn(function()
     local lastShot = 0
 
     while task.wait() do
+		if getgenv().LibraryOpen then
+            continue
+        end
+
         if not silentAim.enabled then
             continue
         end
@@ -1288,10 +1314,15 @@ task.spawn(function()
             continue
         end
 
-        local target = silentAim.FinalTarget
-        if not validSilentTarget(target) then
-            continue
-        end
+        -- check weapon FIRST
+		if not isHoldingTool() then
+   			 continue
+		end
+
+		local target = silentAim.FinalTarget
+			if not validSilentTarget(target) then
+    		continue
+			end
 
         local now = tick()
         if now - lastShot < silentAim.autoShoot.delay then
@@ -1333,7 +1364,9 @@ local function updFOV()
     if fovEnabled then
         aim.fovCircle.Position = Vector2.new(m.X, m.Y)
         aim.fovCircle.Radius = silentAim.enabled and silentAim.fov or aim.fov
-        aim.fovCircle.Visible = true
+
+        -- 🔥 FIX HERE
+        aim.fovCircle.Visible = not getgenv().KW_HIDE_FOV
     else
         aim.fovCircle.Visible = false
     end
@@ -1473,7 +1506,7 @@ do
   L:Toggle({Name="Enabled", Flag="KW_AIM_EN", Default=false, Callback=function(v) if v then enableAim() else disableAim() end end})
   L:Toggle({Name="Hold RMB", Flag="KW_AIM_HOLD", Default=false, Callback=function(v) aim.holdToUse=v end})
   L:Keybind({Name="Toggle Key", Flag="KW_AIM_KEY", Default=aim.toggleKey, Callback=function(k) if typeof(k)=="EnumItem" then aim.toggleKey=k end end})
-  L:Slider({Name="FOV", Flag="KW_AIM_FOV", Default=aim.fov, Min=40, Max=600, Callback=function(v) aim.fov=v end})
+  L:Slider({Name="FOV", Flag="KW_AIM_FOV", Default=aim.fov, Min=40, Max=800, Callback=function(v) aim.fov=v end})
   L:Slider({Name="Smooth", Flag="KW_AIM_SM", Default=math.floor(aim.smooth*100), Min=1, Max=100, Callback=function(v) aim.smooth=clamp(v/100,0.01,1) end})
   L:Slider({Name="Max Distance", Flag="KW_AIM_MD", Default=aim.maxDistance, Min=200, Max=6000, Callback=function(v) aim.maxDistance=v end})
   L:Colorpicker({
@@ -2185,6 +2218,230 @@ do
             end
         end
     })
+
+	local Players = game:GetService("Players")
+local LP = Players.LocalPlayer
+
+local fling = {
+    targetName = nil
+}
+
+-- get player list
+local function getPlayerNames()
+    local t = {}
+    for _,plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            table.insert(t, plr.Name)
+        end
+    end
+    return t
+end
+
+local RunService = game:GetService("RunService")
+local Debris = game:GetService("Debris")
+
+local function doFling(targetPlayer, powerMultiplier)
+    powerMultiplier = powerMultiplier or 1.0  -- 1.0 = default, 1.5+ for insane power
+    
+    if not targetPlayer or not targetPlayer.Character then return end
+    
+    local LP = game.Players.LocalPlayer
+    local myChar = LP.Character
+    if not myChar then return end
+    
+    local myHRP = myChar:FindFirstChild("HumanoidRootPart")
+    local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+    
+    if not myHRP or not targetHRP then return end
+    
+    -- Save original state
+    local originalCF = myHRP.CFrame
+    local humanoid = myChar:FindFirstChildOfClass("Humanoid")
+    
+    if not humanoid then return end
+    
+    -- Strong anti-death setup
+    local wasPlatformStand = humanoid.PlatformStand
+    humanoid.PlatformStand = true
+    humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+    
+    -- Prevent falling through map during fling
+    myHRP.CanCollide = false  -- temporary (helps with clipping into target)
+    
+    local startTime = tick()
+    local flingDuration = 0.45 + math.random() * 0.15  -- ~0.45-0.6 seconds of chaos
+    
+    local connection
+    connection = RunService.Heartbeat:Connect(function()
+        if tick() - startTime > flingDuration then
+            connection:Disconnect()
+            return
+        end
+        
+        if not targetHRP or not targetHRP.Parent then
+            connection:Disconnect()
+            return
+        end
+        
+        -- Chaotic multi-angle offsets (more aggressive than before)
+        local offset = Vector3.new(
+            math.random(-5, 5),
+            math.random(-4, 4),
+            math.random(-5, 5)
+        ) * powerMultiplier
+        
+        -- Slam from multiple chaotic positions around target
+        myHRP.CFrame = targetHRP.CFrame * CFrame.new(offset) * CFrame.Angles(
+            math.rad(math.random(-45, 45)),
+            math.rad(math.random(-180, 180)),
+            math.rad(math.random(-45, 45))
+        )
+        
+        -- Extremely strong velocity bursts
+        local velX = math.random(-1800, 1800) * powerMultiplier
+        local velY = math.random(800, 2200) * powerMultiplier   -- strong upward bias for better flings
+        local velZ = math.random(-1800, 1800) * powerMultiplier
+        
+        myHRP.AssemblyLinearVelocity = Vector3.new(velX, velY, velZ)
+        
+        -- Insane angular velocity (this is what really sends people flying)
+        myHRP.AssemblyAngularVelocity = Vector3.new(
+            math.random(-3500, 3500) * powerMultiplier,
+            math.random(-3500, 3500) * powerMultiplier,
+            math.random(-3500, 3500) * powerMultiplier
+        )
+        
+        -- Tiny random wait for more unpredictability
+        if math.random() < 0.3 then
+            task.wait(math.random(1, 3) / 100)
+        end
+    end)
+    
+    -- Cleanup after fling
+    task.delay(flingDuration + 0.15, function()
+        if connection then connection:Disconnect() end
+        
+        -- Reset velocity completely
+        if myHRP then
+            myHRP.AssemblyLinearVelocity = Vector3.zero
+            myHRP.AssemblyAngularVelocity = Vector3.zero
+            myHRP.CanCollide = true
+        end
+        
+        -- Safe return to original position
+        if myHRP then
+            myHRP.CFrame = originalCF
+        end
+        
+        -- Restore humanoid state
+        if humanoid and humanoid.Parent then
+            humanoid.PlatformStand = wasPlatformStand
+            task.wait(0.1)
+            humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+            task.wait(0.2)
+            humanoid:ChangeState(Enum.HumanoidStateType.Running)
+        end
+    end)
+end
+
+local FL = MiscTab:Section({Name="Fling", Side="Right"})
+
+local playerList = getPlayerNames()
+
+FL:Dropdown({
+    Name = "Target Player",
+    Flag = "KW_FLING_TARGET",
+    Content = playerList,
+    Default = playerList[1],
+    Callback = function(v)
+        fling.targetName = v
+    end
+})
+
+FL:Button({
+    Name = "Refresh Players",
+    Callback = function()
+        local newList = getPlayerNames()
+        FL:UpdateDropdown("KW_FLING_TARGET", newList)
+    end
+})
+
+FL:Button({
+    Name = "Fling Player",
+    Callback = function()
+        local target = Players:FindFirstChild(fling.targetName)
+        if target then
+            doFling(target)
+        end
+    end
+})
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local LP = Players.LocalPlayer
+
+local noFall = {
+    enabled = false,
+    stateConn = nil,
+    velConn = nil
+}
+
+-- STATE BYPASS
+local function setupNoFall(char)
+    if noFall.stateConn then
+        noFall.stateConn:Disconnect()
+    end
+
+    local humanoid = char:WaitForChild("Humanoid")
+
+    noFall.stateConn = humanoid.StateChanged:Connect(function(_, new)
+        if not noFall.enabled then return end
+
+        if new == Enum.HumanoidStateType.Freefall
+        or new == Enum.HumanoidStateType.Landed
+        or new == Enum.HumanoidStateType.FallingDown then
+            
+            humanoid:ChangeState(Enum.HumanoidStateType.Running)
+        end
+    end)
+end
+
+-- VELOCITY CLAMP (runs once globally)
+noFall.velConn = RunService.Heartbeat:Connect(function()
+    if not noFall.enabled then return end
+
+    local char = LP.Character
+    if not char then return end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    if hrp.AssemblyLinearVelocity.Y < -100 then
+        hrp.AssemblyLinearVelocity = Vector3.new(
+            hrp.AssemblyLinearVelocity.X,
+            -35,
+            hrp.AssemblyLinearVelocity.Z
+        )
+    end
+end)
+
+-- CHARACTER HOOK
+if LP.Character then
+    setupNoFall(LP.Character)
+end
+
+LP.CharacterAdded:Connect(setupNoFall)
+
+local NF = MiscTab:Section({Name="No fall damage", Side="Left"})
+NF:Toggle({
+    Name = "Enable",
+    Flag = "KW_NOFALL",
+    Default = false,
+    Callback = function(v)
+        noFall.enabled = v
+    end
+})
 end
 
 
@@ -2197,7 +2454,8 @@ do
 	local cframeSpeed = {
     enabled = false,
     speed = 2,
-    holdToUse = false
+    holdToUse = false,
+	antiSeat = false
 }
 
 local voidPos = {
@@ -2253,7 +2511,15 @@ local voidPos = {
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChildOfClass("Humanoid")
 
-    if hrp and hum and hum.MoveDirection.Magnitude > 0 then
+    if not (hrp and hum) then return end
+
+    if cframeSpeed.antiSeat and hum.Sit then
+        hum.Sit = false
+        hum:ChangeState(Enum.HumanoidStateType.Running)
+    end
+
+    --// Movement
+    if hum.MoveDirection.Magnitude > 0 then
         local move = hum.MoveDirection * cframeSpeed.speed * dt * 60
         hrp.CFrame = hrp.CFrame + move
     end
@@ -2341,13 +2607,109 @@ AA:Dropdown({
 })
 
 
-    local AY = MiscTab:Section({Name="Anti Yaw", Side="Right"})
-    AY:Toggle({Name="Enabled", Flag="KW_ANTIYAW_EN", Default=false, Callback=function(v) antiYaw.enabled=v antiYaw.lockCF=nil end})
-    AY:Dropdown({Name="Mode", Flag="KW_ANTIYAW_MODE", Content={"Hard Lock"}, Default=antiYaw.mode, Callback=function(v) antiYaw.mode=v end})
-    AY:Slider({Name="Smooth Strength", Flag="KW_ANTIYAW_SS", Default=math.floor(antiYaw.smoothStrength*100), Min=5, Max=50, Callback=function(v) antiYaw.smoothStrength=clamp(v/100,0.05,0.5) end})
-    AY:Slider({Name="Random Speed", Flag="KW_ANTIYAW_RS", Default=antiYaw.randomSpeed, Min=1, Max=20, Callback=function(v) antiYaw.randomSpeed=v end})
-    AY:Slider({Name="Min Yaw Offset", Flag="KW_ANTIYAW_MIN", Default=antiYaw.minYaw, Min=-180, Max=0, Callback=function(v) antiYaw.minYaw=v end})
-    AY:Slider({Name="Max Yaw Offset", Flag="KW_ANTIYAW_MAX", Default=antiYaw.maxYaw, Min=0, Max=180, Callback=function(v) antiYaw.maxYaw=v end})
+    local AY = MiscTab:Section({Name="Spin Bot", Side="Right"})
+
+	local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local LP = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera -- Get the game's current camera
+
+local spin = {
+    enabled = false,
+    speed = 360,
+    originalCameraMode = Enum.CameraMode.Classic -- Store the camera mode BEFORE spin starts
+}
+
+local conn
+
+local function startSpin()
+    if conn then return end -- Already connected
+
+    -- Store the player's current camera mode before forcing it to Classic
+    spin.originalCameraMode = LP.CameraMode
+
+    -- Force camera to third-person (Classic) when spinbot is active
+    LP.CameraMode = Enum.CameraMode.Classic
+
+    conn = RunService.RenderStepped:Connect(function(dt)
+        if not spin.enabled then return end
+
+        local char = LP.Character
+        if not char then return end
+
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        local root = char:FindFirstChild("HumanoidRootPart")
+
+        if not humanoid or not root then return end
+
+        -- Make sure AutoRotate is off so our script can control the rotation
+        humanoid.AutoRotate = false
+
+        -- Calculate the angle to rotate this frame based on current speed
+        local angleToRotate = math.rad(spin.speed * dt)
+
+        -- Apply a relative rotation to the HumanoidRootPart's current CFrame
+        root.CFrame = root.CFrame * CFrame.Angles(0, angleToRotate, 0)
+    end)
+end
+
+local function stopSpin()
+    if conn then
+        conn:Disconnect()
+        conn = nil
+    end
+
+    local char = LP.Character
+    if char then
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid.AutoRotate = true -- Re-enable AutoRotate
+        end
+    end
+
+    -- Restore the player's original camera mode
+    if LP.CameraMode ~= spin.originalCameraMode then -- Only change if it's different
+        LP.CameraMode = spin.originalCameraMode
+    end
+end
+
+-- Toggle for Spinbot enable/disable
+AY:Toggle({
+    Name = "Spinbot",
+    Flag = "KW_SPINBOT",
+    Default = false,
+    Callback = function(v)
+        spin.enabled = v
+        if v then startSpin() else stopSpin() end
+    end
+})
+
+-- Slider for Spinbot speed
+AY:Slider({
+    Name = "Spinbot Speed",
+    Flag = "KW_SPINBOT_SPEED",
+    Min = 100,
+    Max = 2000,
+    Default = spin.speed,
+    Callback = function(v)
+        spin.speed = v
+    end
+})
+
+-- The CameraMode changed event listener is no longer strictly needed for *stopping* the spin
+-- because we are now *forcing* third-person. If you manually switch to first-person,
+-- this script will immediately switch you back to third-person.
+-- You can keep this if you want to explicitly log when the camera mode is changed externally
+-- or for additional safety checks, but it's less critical for the core functionality now.
+LP:GetPropertyChangedSignal("CameraMode"):Connect(function()
+    -- If spinbot is enabled and the camera mode somehow changes away from Classic,
+    -- force it back to Classic. This guards against other scripts or manual changes.
+    if spin.enabled and LP.CameraMode ~= Enum.CameraMode.Classic then
+        LP.CameraMode = Enum.CameraMode.Classic
+    end
+end)
 
 	local CS = MiscTab:Section({Name="CFrame Speed", Side="Right"})
 
@@ -2379,6 +2741,15 @@ CS:Slider({
         cframeSpeed.speed = v
     end
 })
+
+CS:Toggle({
+    Name = "Anti Seat",
+    Flag = "KW_CFS_ANTISEAT",
+    Default = false,
+    Callback = function(v)
+        cframeSpeed.antiSeat = v
+    end
+})
 end
 
 do
@@ -2394,7 +2765,7 @@ do
     end
 	})
     L:Keybind({Name="Toggle Key", Flag="KW_SA_KEY", Callback=function(k) if typeof(k)=="EnumItem" then silentAim.toggleKey=k end end})
-    L:Slider({Name="FOV", Flag="KW_SA_FOV", Default=silentAim.fov, Min=40, Max=600, Callback=function(v) silentAim.fov=v end})
+    L:Slider({Name="FOV", Flag="KW_SA_FOV", Default=silentAim.fov, Min=40, Max=800, Callback=function(v) silentAim.fov=v end})
     L:Slider({Name="Max Distance", Flag="KW_SA_MD", Default=silentAim.maxDistance, Min=200, Max=6000, Callback=function(v) silentAim.maxDistance=v end})
     L:Colorpicker({
         Name = "FOV Color",
@@ -2455,7 +2826,7 @@ end
 RunService.RenderStepped:Connect(function()
     if not silentAim.enabled then
         silentAim.FinalTarget = nil
-        if aim.fovCircle then aim.fovCircle.Visible = aim.enabled or silentAim.enabled end
+        if aim.fovCircle then aim.fovCircle.Visible = (aim.enabled or silentAim.enabled) and not getgenv().KW_HIDE_FOV end
         return
     end
 
@@ -2532,7 +2903,7 @@ or silentCanSee(char) then
     -- Update FOV circle
     if aim.fovCircle then
         aim.fovCircle.Radius = silentAim.enabled and silentAim.fov or aim.fov
-        aim.fovCircle.Visible = aim.enabled or silentAim.enabled
+        aim.fovCircle.Visible = (aim.enabled or silentAim.enabled) and not getgenv().KW_HIDE_FOV
         aim.fovCircle.Position = UIS:GetMouseLocation()
     end
 end)
@@ -2947,8 +3318,8 @@ do
     local Cam = workspace.CurrentCamera
 
     --// Fullbright
-    local L = World:Section({Name="Fullbright", Side="Left"})
-    L:Toggle({Name="Enabled (lock)", Flag="KW_FB_EN", Default=false, Callback=function(v) if v then enableFB() else disableFB() end end})
+    local L = World:Section({Name="World", Side="Left"})
+    L:Toggle({Name="Fullbright", Flag="KW_FB_EN", Default=false, Callback=function(v) if v then enableFB() else disableFB() end end})
     L:Slider({Name="Brightness", Flag="KW_FB_BR", Default=fb.brightness, Min=1, Max=6, Callback=function(v) fb.brightness=v end})
     L:Slider({Name="ClockTime", Flag="KW_FB_CT", Default=fb.clock, Min=0, Max=24, Callback=function(v) fb.clock=v end})
     L:Toggle({Name="No Shadows", Flag="KW_FB_NS", Default=fb.noShadows, Callback=function(v) fb.noShadows=v end})
@@ -2969,6 +3340,35 @@ do
             end
         end
     })
+
+
+	--// WEATHER SYSTEM
+local weatherType = game:GetService("ReplicatedStorage"):WaitForChild("WeatherType")
+
+local weather = {
+    selected = "Clear"
+}
+
+-- Dropdown (select weather)
+L:Dropdown({
+    Name = "Weather Type",
+    Flag = "KW_WEATHER_TYPE",
+    Content = {"Clear", "Snow", "Rain"},
+    Default = "Clear",
+    Callback = function(v)
+        weather.selected = v
+    end
+})
+
+-- Button (apply weather)
+L:Button({
+    Name = "Set Weather",
+    Callback = function()
+        if weatherType then
+            weatherType.Value = weather.selected
+        end
+    end
+})
 
     --// Camera Section
     local R = World:Section({Name="Camera", Side="Right"})
@@ -3247,247 +3647,526 @@ local B = World:Section({Name="Bullet Trails", Side="Left"})
             bulletTrails.color = c
         end
     })
-end
 
-
-----------------------------------------------------------------
-----------------------------------------------------------------
-local placeName = "Place"
-pcall(function()
-  local info = MPS:GetProductInfo(game.PlaceId)
-  if info and info.Name and #info.Name > 0 then placeName = info.Name end
-end)
-
-local hud = {
-    showHeaderBar = true,
-
-    showFPS = true,
-    showPing = true,
-    showUID = true,
-
-	deathNotifs = false,
-
-    showCrosshair = false,
-    crossGap = 8,
-    crossLen = 10,
-    crossThick = 1.5,
+local hitSounds = {
+    enabled = false,
+    soundId = "rbxassetid://8679627751",
+    volume = 1,
+    mode = "NeverLose" -- or "Custom"
 }
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local Stats = game:GetService("Stats")
+local Debris = game:GetService("Debris")
 
-local LP = Players.LocalPlayer
-local PG = LP:WaitForChild("PlayerGui")
+--// play sound
+local function playHitSound()
+    if not hitSounds.enabled then return end
 
+    local s = Instance.new("Sound")
+    s.SoundId = hitSounds.soundId
+    s.Volume = hitSounds.volume
+    s.Parent = workspace
+    s:Play()
 
-local wmGui = Instance.new("ScreenGui")
-wmGui.Name = "KW_Watermark"
-wmGui.ResetOnSpawn = false
-wmGui.IgnoreGuiInset = true
-wmGui.Parent = PG
+    Debris:AddItem(s, 2)
+end
 
-local wmFrame = Instance.new("Frame")
-wmFrame.Name = "Main"
-wmFrame.Parent = wmGui
-wmFrame.AnchorPoint = Vector2.new(0.5, 0)
-wmFrame.Position = UDim2.new(0.5, 0, 0, 10)
-wmFrame.AutomaticSize = Enum.AutomaticSize.X
-wmFrame.Size = UDim2.new(0, 0, 0, 32)
-wmFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
-wmFrame.BorderSizePixel = 0
+--// Track YOUR shots (queue system instead of 1 timestamp)
+local shotTimes = {}
+local maxShots = 10
 
-local wmCorner = Instance.new("UICorner")
-wmCorner.CornerRadius = UDim.new(0, 10)
-wmCorner.Parent = wmFrame
+local holding = false
+local lastShotTime = 0
+local fireRate = 0.08 -- tweak if needed
 
-local wmStroke = Instance.new("UIStroke")
-wmStroke.Parent = wmFrame
-wmStroke.Color = Color3.fromRGB(45, 45, 55)
-wmStroke.Thickness = 1
-wmStroke.Transparency = 0.15
+local function isHoldingTool()
+    local char = game.Players.LocalPlayer.Character
+    if not char then return false end
 
-local wmPadding = Instance.new("UIPadding")
-wmPadding.Parent = wmFrame
-wmPadding.PaddingLeft = UDim.new(0, 12)
-wmPadding.PaddingRight = UDim.new(0, 12)
+    return char:FindFirstChildOfClass("Tool") ~= nil
+end
 
-local wmLayout = Instance.new("UIListLayout")
-wmLayout.Parent = wmFrame
-wmLayout.FillDirection = Enum.FillDirection.Horizontal
-wmLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-wmLayout.Padding = UDim.new(0, 8)
-wmLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIS.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        holding = true
+    end
+end)
 
-local function clearDynamic()
-    for _, v in ipairs(wmFrame:GetChildren()) do
-        if v:GetAttribute("WMItem") then
-            v:Destroy()
+UIS.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        holding = false
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    if not holding then return end
+
+    if tick() - lastShotTime < fireRate then return end
+    lastShotTime = tick()
+
+    table.insert(shotTimes, lastShotTime)
+
+    if #shotTimes > maxShots then
+        table.remove(shotTimes, 1)
+    end
+end)
+
+--// Check if a hit belongs to YOU (better than single timestamp)
+local function isYourHit()
+    local now = tick()
+
+    for i = #shotTimes, 1, -1 do
+        local dt = now - shotTimes[i]
+
+        -- allow longer window for far shots
+        if dt <= 0.35 then
+            return true
         end
+    end
+
+    return false
+end
+
+--// Hook humanoid safely (prevents duplicates + break)
+local hookedHumanoids = {}
+
+local function hookHumanoid(hum)
+    if hookedHumanoids[hum] then return end
+    hookedHumanoids[hum] = true
+
+    local lastHealth = hum.Health
+
+    hum.HealthChanged:Connect(function(newHealth)
+        if not hitSounds.enabled then return end
+
+        if newHealth < lastHealth then
+    if isHoldingTool() and isYourHit() then
+        playHitSound()
     end
 end
 
-local function makeLabel(text, color, size, order)
-    local lbl = Instance.new("TextLabel")
-    lbl.Parent = wmFrame
-    lbl.BackgroundTransparency = 1
-    lbl.AutomaticSize = Enum.AutomaticSize.X
-    lbl.Size = UDim2.new(0, 0, 1, 0)
-    lbl.Font = Enum.Font.GothamBold
-    lbl.Text = text
-    lbl.TextSize = size or 14
-    lbl.TextColor3 = color
-    lbl.LayoutOrder = order
-    lbl:SetAttribute("WMItem", true)
-    return lbl
-end
-
-local function makeDot(order)
-    local dot = Instance.new("Frame")
-    dot.Parent = wmFrame
-    dot.Size = UDim2.new(0, 6, 0, 6)
-    dot.BackgroundColor3 = Color3.fromRGB(170, 90, 255)
-    dot.BorderSizePixel = 0
-    dot.LayoutOrder = order
-    dot:SetAttribute("WMItem", true)
-
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(1, 0)
-    c.Parent = dot
-
-    return dot
-end
-
-local currentPing = "0"
-local currentFPS = "0"
-
-local function getPing()
-    local ok, result = pcall(function()
-        local network = Stats:FindFirstChild("Network")
-        if not network then return "0" end
-
-        local serverStats = network:FindFirstChild("ServerStatsItem")
-        if not serverStats then return "0" end
-
-        local dataPing = serverStats:FindFirstChild("Data Ping")
-        if not dataPing then return "0" end
-
-        local str = dataPing:GetValueString()
-        local num = string.match(str, "%d+")
-        return num or "0"
+        lastHealth = newHealth
     end)
 
-    return ok and result or "0"
+    -- clean up if humanoid removed
+    hum.AncestryChanged:Connect(function(_, parent)
+        if not parent then
+            hookedHumanoids[hum] = nil
+        end
+    end)
 end
 
-local function rebuildWatermark()
-    clearDynamic()
-
-    local order = 1
-    makeLabel("withdraw.cc", Color3.fromRGB(170, 90, 255), 15, order)
-    order += 1
-
-    local chips = {}
-
-    if hud.showPing then
-        table.insert(chips, {text = currentPing .. " ms", color = Color3.fromRGB(230,230,230)})
-    end
-    if hud.showFPS then
-        table.insert(chips, {text = currentFPS .. " fps", color = Color3.fromRGB(230,230,230)})
-    end
-    if hud.showUID then
-        table.insert(chips, {text = LP.UserId .. " uid", color = Color3.fromRGB(200,200,200)})
+--// Character setup (handles respawns + replacements)
+local function setupCharacter(char)
+    -- existing humanoid
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hookHumanoid(hum)
     end
 
-    if #chips > 0 then
-        makeLabel("|", Color3.fromRGB(200, 200, 200), 14, order)
-        order += 1
+    -- detect NEW humanoids (important fix)
+    char.ChildAdded:Connect(function(child)
+        if child:IsA("Humanoid") then
+            hookHumanoid(child)
+        end
+    end)
+end
+
+--// Players setup
+for _, plr in pairs(Players:GetPlayers()) do
+    if plr ~= LP then
+        if plr.Character then
+            setupCharacter(plr.Character)
+        end
+        plr.CharacterAdded:Connect(setupCharacter)
     end
+end
 
-    for i, chip in ipairs(chips) do
-        makeLabel(chip.text, chip.color, 14, order)
-        order += 1
+Players.PlayerAdded:Connect(function(plr)
+    if plr ~= LP then
+        plr.CharacterAdded:Connect(setupCharacter)
+    end
+end)
 
-        if i < #chips then
-            makeDot(order)
-            order += 1
+local H = World:Section({Name="Hit Sounds", Side="Right"})
+
+-- ENABLE
+H:Toggle({
+    Name="Enabled",
+    Flag="KW_HIT_SND",
+    Default=false,
+    Callback=function(v)
+        hitSounds.enabled = v
+    end
+})
+
+-- VOLUME
+H:Slider({
+    Name="Volume",
+    Flag="KW_HIT_SND_VOL",
+    Default=100,
+    Min=0,
+    Max=200,
+    Callback=function(v)
+        hitSounds.volume = v / 100
+    end
+})
+
+-- PRESET DROPDOWN
+H:Dropdown({
+    Name = "Sound Preset",
+    Flag = "KW_HIT_SND_MODE",
+    Content = {
+        "NeverLose",
+        "Bell",
+        "Bubble",
+        "Meow",
+        "Custom",
+		"Rust"
+    },
+    Default = "NeverLose",
+    Callback = function(v)
+        hitSounds.mode = v
+
+        if v == "NeverLose" then
+            hitSounds.soundId = "rbxassetid://8679627751"
+
+        elseif v == "Bell" then
+            hitSounds.soundId = "rbxassetid://137731492025967"
+
+        elseif v == "Bubble" then
+            hitSounds.soundId = "rbxassetid://77120543307812"
+
+        elseif v == "Meow" then
+            hitSounds.soundId = "rbxassetid://102336567189681"
+		elseif v == "Rust" then
+			hitSounds.soundId = "rbxassetid://138750331387064"
+
+        end
+        -- Custom handled separately
+    end
+})
+
+-- CUSTOM ID INPUT
+H:Box({
+    Name = "Custom Sound ID",
+    Flag = "KW_HIT_SND_CUSTOM",
+    Placeholder = "rbxassetid://123456",
+    Callback = function(text)
+        if hitSounds.mode == "Custom" and text ~= "" then
+            -- auto format if user pastes just numbers
+            if not text:find("rbxassetid://") then
+                text = "rbxassetid://" .. text
+            end
+
+            hitSounds.soundId = text
         end
     end
-
-    wmGui.Enabled = hud.showHeaderBar
+})
 end
 
-local lastFpsTick = tick()
-local frameCounter = 0
+
+----------------------------------------------------------------
+----------------------------------------------------------------
+local cross = {
+    enabled = false,
+    gap = 8,
+    len = 10,
+    thick = 1.5,
+
+    color = Color3.fromRGB(255,255,255),
+    outline = true,
+    outlineColor = Color3.fromRGB(0,0,0),
+
+    pulse = true,
+    pulseSpeed = 6,
+    pulseAmount = 2,
+
+    dynamic = false,
+    maxSpread = 10,
+
+    alpha = 0,
+    rotation = 0,
+
+    spin = false,
+    spinSpeed = 5,
+
+	pulse = true,
+	pulseSpeed = 6,
+
+	pulseMin = -1,
+	pulseMax = 3
+}
+
+local Camera = workspace.CurrentCamera
+
+local function newLine(z)
+    local l = Drawing.new("Line")
+    l.Visible = false
+    l.ZIndex = z or 999
+    return l
+end
+
+local lines = {
+    top = newLine(1001),
+    bottom = newLine(1001),
+    left = newLine(1001),
+    right = newLine(1001),
+}
+
+local function getColor(c)
+    if typeof(c) == "Color3" then
+        return c
+    elseif typeof(c) == "table" then
+        if c.Color then
+            return c.Color
+        elseif c.r and c.g and c.b then
+            return Color3.new(c.r, c.g, c.b)
+        elseif c.R and c.G and c.B then
+            return Color3.fromRGB(c.R, c.G, c.B)
+        end
+    end
+    return Color3.fromRGB(255,255,255)
+end
 
 RunService.RenderStepped:Connect(function()
-    frameCounter += 1
-
-    if tick() - lastFpsTick >= 1 then
-        currentFPS = tostring(frameCounter)
-        frameCounter = 0
-        lastFpsTick = tick()
-        rebuildWatermark()
+    for _,l in pairs(lines) do 
+        l.Visible = false 
     end
-end)
 
-task.spawn(function()
-    while true do
-        currentPing = getPing()
-        rebuildWatermark()
-        task.wait(1)
+    if not cross.enabled then return end
+
+    local vp = Camera.ViewportSize
+    local center = Vector2.new(vp.X/2, vp.Y/2)
+
+    local char = LP.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+
+    -- spread
+    local spread = 0
+    if cross.dynamic and hum then
+        spread = math.clamp(hum.MoveDirection.Magnitude * cross.maxSpread, 0, cross.maxSpread)
     end
-end)
 
-RunService.RenderStepped:Connect(function()
-    wmGui.Enabled = hud.showHeaderBar
-end)
+    local pulse = 0
+	if cross.pulse then
+    	local wave = (math.sin(tick() * cross.pulseSpeed) + 1) / 2
+    	pulse = cross.pulseMin + (cross.pulseMax - cross.pulseMin) * wave
+	end
 
-rebuildWatermark()
+    -- rotation + spin
+    local rot = math.rad(cross.rotation or 0)
+    if cross.spin then
+        rot = rot + tick() * cross.spinSpeed
+    end
+
+    local function rotate(vec)
+        return Vector2.new(
+            vec.X * math.cos(rot) - vec.Y * math.sin(rot),
+            vec.X * math.sin(rot) + vec.Y * math.cos(rot)
+        )
+    end
+
+    local gap = cross.gap + spread + pulse
+    local len = cross.len
+    local t = cross.thick
+    local alpha = 1 - (cross.alpha or 0)
+
+    local mainColor = getColor(cross.color)
+    local outlineColor = getColor(cross.outlineColor)
+
+    local function setLine(l, from, to, col, thickness)
+    l.From = from
+    l.To = to
+
+    -- 🔥 FORCE COLOR FIX
+    local fixedColor = getColor(col)
+    l.Color = Color3.new(fixedColor.R, fixedColor.G, fixedColor.B)
+
+    l.Thickness = thickness or t
+    l.Transparency = alpha
+    l.Visible = true
+end
+
+    local up = rotate(Vector2.new(0,-1))
+    local down = rotate(Vector2.new(0,1))
+    local left = rotate(Vector2.new(-1,0))
+    local right = rotate(Vector2.new(1,0))
+
+    local topFrom = center + up * gap
+    local topTo = center + up * (gap + len)
+
+    local bottomFrom = center + down * gap
+    local bottomTo = center + down * (gap + len)
+
+    local leftFrom = center + left * gap
+    local leftTo = center + left * (gap + len)
+
+    local rightFrom = center + right * gap
+    local rightTo = center + right * (gap + len)
+
+    -- main (on top)
+    setLine(lines.top, topFrom, topTo, mainColor, t)
+    setLine(lines.bottom, bottomFrom, bottomTo, mainColor, t)
+    setLine(lines.left, leftFrom, leftTo, mainColor, t)
+    setLine(lines.right, rightFrom, rightTo, mainColor, t)
+end)
 
 do
-    local H = HUDTab:Section({Name="Header | Watermark", Side="Left"})
-    H:Toggle({
-        Name = "Show Watermark",
-        Flag = "KW_WM_SHOW",
-        Default = hud.showHeaderBar,
-        Callback = function(v)
-            hud.showHeaderBar = v
-        end
-    })
+	local S = HUDTab:Section({Name="Menu", Side="Right"})
+	S:Toggle({
+    Name = "Particles Effect",
+    Flag = "KW_PARTICLES",
+    Default = true,
+    Callback = function(v)
+        getgenv().KW_PARTICLES = v
+    end
+})
 
-    H:Toggle({
-        Name = "Show FPS",
-        Flag = "KW_WM_FPS",
-        Default = hud.showFPS,
-        Callback = function(v)
-            hud.showFPS = v
-        end
-    })
+local C = HUDTab:Section({Name="Cross hair", Side="Left"})
 
-    H:Toggle({
-        Name = "Show Ping",
-        Flag = "KW_WM_PING",
-        Default = hud.showPing,
-        Callback = function(v)
-            hud.showPing = v
-        end
-    })
+    C:Toggle({
+    Name="Enabled",
+    Flag="KW_CH_EN",
+    Default=false,
+    Callback=function(v)
+        cross.enabled = v
+    end
+})
 
-    H:Toggle({
-        Name = "Show UID",
-        Flag = "KW_WM_UID",
-        Default = hud.showUID,
-        Callback = function(v)
-            hud.showUID = v
-        end
-    })
+C:Slider({
+    Name="Gap (px)",
+    Flag="KW_CH_GAP",
+    Default=8,
+    Min=3,
+    Max=24,
+    Callback=function(v)
+        cross.gap = math.floor(v)
+    end
+})
 
-    local C = HUDTab:Section({Name="Crosshair", Side="Right"})
-    C:Toggle({Name="Enabled", Flag="KW_CH_EN", Default=hud.showCrosshair, Callback=function(v) hud.showCrosshair=v end})
-    C:Slider({Name="Gap (px)", Flag="KW_CH_GAP", Default=hud.crossGap, Min=3, Max=24, Callback=function(v) hud.crossGap=math.floor(v) end})
-    C:Slider({Name="Length (px)", Flag="KW_CH_LEN", Default=hud.crossLen, Min=4, Max=24, Callback=function(v) hud.crossLen=math.floor(v) end})
-    C:Slider({Name="Thickness", Flag="KW_CH_TH", Default=math.floor(hud.crossThick*10), Min=10, Max=40, Callback=function(v) hud.crossThick=clamp(v/10,0.5,4) end})
+C:Slider({
+    Name="Length (px)",
+    Flag="KW_CH_LEN",
+    Default=10,
+    Min=4,
+    Max=24,
+    Callback=function(v)
+        cross.len = math.floor(v)
+    end
+})
+
+C:Slider({
+    Name="Thickness",
+    Flag="KW_CH_TH",
+    Default=15,
+    Min=5,
+    Max=40,
+    Callback=function(v)
+        cross.thick = v/10
+    end
+})
+
+C:Colorpicker({
+    Name = "Color",
+    Flag = "KW_CH_COL",
+    Default = Color3.fromRGB(255,255,255),
+    Callback = function(c)
+        cross.color = c -- handled safely in render
+    end
+})
+
+-- Transparency
+C:Slider({
+    Name = "Transparency",
+    Flag = "KW_CH_ALPHA",
+    Default = 0,
+    Min = 0,
+    Max = 100,
+    Callback = function(v)
+        cross.alpha = v / 100
+    end
+})
+
+-- Rotation offset (static angle)
+C:Slider({
+    Name = "Rotation Offset",
+    Flag = "KW_CH_ROT",
+    Default = 0,
+    Min = 0,
+    Max = 360,
+    Callback = function(v)
+        cross.rotation = v
+    end
+})
+
+-- Pulse toggle
+C:Toggle({
+    Name = "Pulse",
+    Flag = "KW_CH_PULSE",
+    Default = true,
+    Callback = function(v)
+        cross.pulse = v
+    end
+})
+
+-- Pulse Min (inward)
+C:Slider({
+    Name = "Pulse Min",
+    Flag = "KW_CH_PMIN",
+    Default = -1,
+    Min = -10,
+    Max = 10,
+    Callback = function(v)
+        cross.pulseMin = v
+    end
+})
+
+-- Pulse Max (outward)
+C:Slider({
+    Name = "Pulse Max",
+    Flag = "KW_CH_PMAX",
+    Default = 3,
+    Min = 0,
+    Max = 20,
+    Callback = function(v)
+        cross.pulseMax = v
+    end
+})
+
+-- Pulse Speed
+C:Slider({
+    Name = "Pulse Speed",
+    Flag = "KW_CH_PSPEED",
+    Default = 6,
+    Min = 1,
+    Max = 20,
+    Callback = function(v)
+        cross.pulseSpeed = v
+    end
+})
+
+-- Spin toggle
+C:Toggle({
+    Name = "Spin",
+    Flag = "KW_CH_SPIN",
+    Default = false,
+    Callback = function(v)
+        cross.spin = v
+    end
+})
+
+-- Spin speed
+C:Slider({
+    Name = "Spin Speed",
+    Flag = "KW_CH_SPINSPD",
+    Default = 5,
+    Min = 1,
+    Max = 20,
+    Callback = function(v)
+        cross.spinSpeed = v
+    end
+})
 end
 
 do
@@ -3497,7 +4176,6 @@ do
   R:Button({Name="Remove Friend", Callback=function() local n=GUI.flags["KW_USER_BOX"]; if n then whitelist[n]=nil end userBox:Set("") end})
   R:Button({Name="Add to Ignore", Callback=function() local n=GUI.flags["KW_USER_BOX"]; if n and n~="" then ignorelist[n]=true end userBox:Set("") end})
   R:Button({Name="Remove Ignore", Callback=function() local n=GUI.flags["KW_USER_BOX"]; if n then ignorelist[n]=nil end userBox:Set("") end})
-
   local C = About:Section({Name=" ", Side="Right"})
 
   local ConfigList = C:Dropdown({
@@ -3558,6 +4236,111 @@ end)
 
 enableIR()
 
+--// PARTICLE SYSTEM (ONLY)
+
+local RunService = game:GetService("RunService")
+local Camera = workspace.CurrentCamera
+
+local particles = {}
+local particleEnabled = true
+
+getgenv().KW_PARTICLES = true
+
+--// create particle
+local function newParticle()
+    local c = Drawing.new("Circle")
+
+    c.Radius = math.random(1,2)
+    c.Filled = true
+    c.Color = Color3.fromRGB(170,120,255)
+    c.Transparency = math.random(50,90)/100
+    c.Visible = true
+    c.ZIndex = 1 -- behind menu
+
+    local size = Camera.ViewportSize
+    c.Position = Vector2.new(
+        math.random(0, size.X),
+        math.random(0, size.Y)
+    )
+
+    return {
+        obj = c,
+        vel = Vector2.new(
+            math.random(-10,10)/20,
+            math.random(-10,10)/20
+        )
+    }
+end
+
+--// cleanup
+local function clearParticles()
+    for _,p in pairs(particles) do
+        if p.obj then p.obj:Remove() end
+    end
+    table.clear(particles)
+end
+
+--// render loop
+RunService.RenderStepped:Connect(function()
+    if not particleEnabled then return end
+
+    local size = Camera.ViewportSize
+
+    -- spawn (light + smooth)
+    if #particles < 40 and math.random() < 0.15 then
+        table.insert(particles, newParticle())
+    end
+
+    -- update
+    for i = #particles, 1, -1 do
+        local p = particles[i]
+        local obj = p.obj
+
+        if obj then
+            obj.Visible = true
+
+            -- float motion (smooth ambient)
+            p.vel = p.vel + Vector2.new(
+                math.sin(tick() + i) * 0.02,
+                math.cos(tick() + i) * 0.02
+            )
+
+            obj.Position = obj.Position + p.vel
+
+            -- remove off screen
+            if obj.Position.X < -20 or obj.Position.X > size.X + 20
+            or obj.Position.Y < -20 or obj.Position.Y > size.Y + 20 then
+                obj:Remove()
+                table.remove(particles, i)
+            end
+        end
+    end
+end)
+
+--// state handler (menu + toggle)
+task.spawn(function()
+    local last = false
+
+    while true do
+        local open = getgenv().LibraryOpen
+        local toggle = getgenv().KW_PARTICLES
+
+        local shouldEnable = open and toggle
+
+        if shouldEnable ~= last then
+            last = shouldEnable
+
+            if shouldEnable then
+                particleEnabled = true
+            else
+                particleEnabled = false
+                clearParticles()
+            end
+        end
+
+        task.wait(0.05)
+    end
+end)
 
 getgenv().KittenWareLoaded = true
 getgenv().KittenWareLoading = nil
