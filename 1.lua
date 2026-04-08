@@ -1492,7 +1492,6 @@ local function stepAim()
     local who = pl and pl.Name or "Target"
     if ch and isPassive(ch) then who = who.." (P)" end
     local dist = (t.Position - Camera.CFrame.Position).Magnitude
-    setAimHUD(string.format("%s  |  %.0fs", who, dist))
   else
     setAimHUD(nil)
   end
