@@ -1523,7 +1523,7 @@ do
   F:Toggle({Name="Team Check", Flag="KW_AIM_TC", Default=aim.teamCheck, Callback=function(v) aim.teamCheck=v end})
   F:Toggle({Name="Wall Check", Flag="KW_AIM_WC", Default=aim.wallCheck, Callback=function(v) aim.wallCheck=v end})
   F:Toggle({Name="Ignore Passive", Flag="KW_AIM_PI", Default=aim.passiveIgnore, Callback=function(v) aim.passiveIgnore=v end})
-  F:Dropdown({Name="Target Part", Flag="KW_AIM_TP", Content={"Head","HumanoidRootPart"}, Default=aim.targetPart, Callback=function(v) aim.targetPart=v end})
+  F:Dropdown({Name="Target Part", Flag="KW_AIM_TP", Content={"Head", "Torso", "Right Arm", "Left Arm", "Right Leg", "Left Leg"}, Default=aim.targetPart, Callback=function(v) aim.targetPart=v end})
   F:Slider({Name="Min HP to Lock", Flag="KW_AIM_MHP", Default=aim.minHPToLock, Min=0, Max=100, Callback=function(v) aim.minHPToLock=math.max(0, math.floor(v)) end})
   F:Slider({Name="Select Interval (ms)", Flag="KW_AIM_SI", Default=math.floor(aim.selectInterval*1000), Min=30, Max=200, Callback=function(v) aim.selectInterval=clamp(v/1000,0.03,0.2) end})
 
@@ -2901,7 +2901,7 @@ V:Colorpicker({
     F:Toggle({Name="Team Check", Flag="KW_SA_TC", Default=silentAim.teamCheck, Callback=function(v) silentAim.teamCheck=v end})
     F:Toggle({Name="Wall Check", Flag="KW_SA_WC", Default=silentAim.wallCheck, Callback=function(v) silentAim.wallCheck=v end})
     F:Toggle({Name="Ignore Passive", Flag="KW_SA_PI", Default=silentAim.passiveIgnore, Callback=function(v) silentAim.passiveIgnore=v end})
-    F:Dropdown({Name="Target Part", Flag="KW_SA_TP", Content={"Head","Torso"}, Default=silentAim.targetPart, Callback=function(v) silentAim.targetPart=v end})
+    F:Dropdown({Name="Target Part", Flag="KW_SA_TP", Content={"Head", "Torso", "Right Arm", "Left Arm", "Right Leg", "Left Leg"}, Default=silentAim.targetPart, Callback=function(v) silentAim.targetPart=v end})
     F:Slider({Name="Min HP to Lock", Flag="KW_SA_MHP", Default=1, Min=0, Max=100, Callback=function(v) silentAim.minHPToLock=math.max(0, math.floor(v)) end})
     F:Slider({Name="Select Interval (ms)", Flag="KW_SA_SI", Default=math.floor(silentAim.selectInterval*1000), Min=30, Max=200, Callback=function(v) silentAim.selectInterval=clamp(v/1000,0.03,0.2) end})
 
