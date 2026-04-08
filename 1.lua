@@ -30,7 +30,7 @@ print([[
 ==========================================================
 |                      withdraw.cc                       |
 |--------------------------------------------------------|
-| Version: v1.30                                         |
+| Version: v1.31                                         |
 |                                                        |
 |                                                        |
 |                                                        |
@@ -2433,7 +2433,7 @@ end
 
 LP.CharacterAdded:Connect(setupNoFall)
 
-local NF = MiscTab:Section({Name="No fall damage", Side="Left"})
+local NF = MiscTab:Section({Name="No fall damage", Side="Right"})
 NF:Toggle({
     Name = "Enable",
     Flag = "KW_NOFALL",
@@ -2748,6 +2748,86 @@ CS:Toggle({
     Default = false,
     Callback = function(v)
         cframeSpeed.antiSeat = v
+    end
+})
+
+--// VIEWMODEL OFFSET SYSTEM
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local LP = Players.LocalPlayer
+
+local vm = {
+    enabled = false,
+    x = 0.6,
+    y = 0.3,
+    z = 0.5
+}
+
+local function applyViewModelOffset(tool)
+    if not tool then return end
+
+    local offset = tool:FindFirstChild("ViewModelOffset")
+    if not offset then return end
+
+    offset.Value = Vector3.new(vm.x, vm.y, vm.z)
+end
+
+-- constantly apply (handles switching tools)
+RunService.RenderStepped:Connect(function()
+    if not vm.enabled then return end
+
+    local char = LP.Character
+    if not char then return end
+
+    local tool = char:FindFirstChildOfClass("Tool")
+    if not tool then return end
+
+    applyViewModelOffset(tool)
+end)
+
+local VMO = MiscTab:Section({Name="ViewModel Offset", Side="Left"})
+
+VMO:Toggle({
+    Name = "Enable Offset",
+    Flag = "KW_VM_ENABLE",
+    Default = false,
+    Callback = function(v)
+        vm.enabled = v
+    end
+})
+
+VMO:Slider({
+    Name = "Offset X",
+    Flag = "KW_VM_X",
+    Default = vm.x,
+    Min = -5,
+    Max = 5,
+    Callback = function(v)
+        vm.x = v
+    end
+})
+
+VMO:Slider({
+    Name = "Offset Y",
+    Flag = "KW_VM_Y",
+    Default = vm.y,
+    Min = -5,
+    Max = 5,
+    Callback = function(v)
+        vm.y = v
+    end
+})
+
+VMO:Slider({
+    Name = "Offset Z",
+    Flag = "KW_VM_Z",
+    Default = vm.z,
+    Min = -5,
+    Max = 5,
+    Callback = function(v)
+        vm.z = v
     end
 })
 end
