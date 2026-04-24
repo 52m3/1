@@ -1131,6 +1131,17 @@ local silentAim = {
     wallCheck = true,
     passiveIgnore = true,
     targetPart = "Torso",
+    selectedPartName = "Torso",
+    currentPart = nil,
+    headshotPercent = 35,
+    scanParts = {
+        Head = true,
+        Torso = true,
+        ["Right Arm"] = false,
+        ["Left Arm"] = false,
+        ["Right Leg"] = false,
+        ["Left Leg"] = false
+    },
     fov = 100,
     maxDistance = 1200,
 
@@ -1204,17 +1215,71 @@ local function validSilentHealth(hum)
     return true
 end
 
-local function getSilentTargetPart(character)
+local silentPartOrder = { "Head", "Torso", "Right Arm", "Left Arm", "Right Leg", "Left Leg" }
+
+local function getSilentTargetPart(character, mousePos, useHeadshotRoll)
     if not character then return nil end
 
-    local targetPart = silentAim.targetPart
     if silentAim.rage.enabled and silentAim.rage.headOnly then
-        targetPart = "Head"
+        local head = character:FindFirstChild("Head")
+        if head then
+            return head, "Head"
+        end
     end
 
-    return character:FindFirstChild(targetPart)
+    local enabledNames = {}
+    for _, partName in ipairs(silentPartOrder) do
+        if silentAim.scanParts[partName] and partName ~= "Head" then
+            table.insert(enabledNames, partName)
+        end
+    end
+
+    local head = character:FindFirstChild("Head")
+    local hsChance = clamp(math.floor(silentAim.headshotPercent or 0), 0, 100)
+
+    -- Only roll head chance when acquiring/reacquiring target
+    if useHeadshotRoll and silentAim.scanParts.Head and head and math.random(1, 100) <= hsChance then
+        return head, "Head"
+    end
+
+    if #enabledNames == 0 then
+        if silentAim.scanParts.Head and head then
+            return head, "Head"
+        end
+        table.insert(enabledNames, silentAim.targetPart)
+    end
+
+    local bestPart, bestName = nil, nil
+    local bestDist = math.huge
+
+    for _, partName in ipairs(enabledNames) do
+        local part = character:FindFirstChild(partName)
+        if part then
+            local score = (part.Position - Camera.CFrame.Position).Magnitude
+            if mousePos then
+                local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                if onScreen then
+                    score = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                end
+            end
+
+            if score < bestDist then
+                bestDist = score
+                bestPart = part
+                bestName = partName
+            end
+        end
+    end
+
+    if bestPart then
+        return bestPart, bestName
+    end
+
+    local fallbackName = silentAim.targetPart
+    local fallbackPart = character:FindFirstChild(fallbackName)
         or character:FindFirstChild("HumanoidRootPart")
-        or character:FindFirstChild("Head")
+        or head
+    return fallbackPart, fallbackName
 end
 
 local function validSilentTarget(player)
@@ -1597,9 +1662,19 @@ mt.__namecall = newcclosure(function(self, ...)
     local method = getnamecallmethod()
     local args = {...}
     if silentAim.enabled and not silentAim.droneOnly and method == "FireServer" and tostring(self) == "FireEvent" and silentAim.FinalTarget then
+        local targetCharacter = silentAim.FinalTarget.Character
+        local targetPart = silentAim.currentPart
+        if not targetPart and targetCharacter then
+            targetPart = targetCharacter:FindFirstChild(silentAim.selectedPartName or silentAim.targetPart)
+                or targetCharacter:FindFirstChild("HumanoidRootPart")
+                or targetCharacter:FindFirstChild("Head")
+        end
+        if not targetCharacter or not targetPart then
+            return old_namecall(self, ...)
+        end
         args[1] = {{{
-            silentAim.FinalTarget.Character[silentAim.targetPart],
-            silentAim.FinalTarget.Character[silentAim.targetPart].Position,
+            targetPart,
+            targetPart.Position,
             Vector3.new(0,0,0),
             Enum.Material.Plastic,
             LP.Character.HumanoidRootPart.Position,
@@ -1633,8 +1708,8 @@ old_mouse_index = hookmetamethod(mouse, "__index", function(self, key)
             return old_mouse_index(self, key)
         end
 
-        local part =
-            character:FindFirstChild(silentAim.targetPart)
+        local part = silentAim.currentPart
+            or character:FindFirstChild(silentAim.selectedPartName or silentAim.targetPart)
             or character:FindFirstChild("Head")
 
         if not part then
@@ -1964,6 +2039,53 @@ local function mainLoop()
 end
 
 do
+--// PERFECT FIRE RATE (FINAL FIX)
+
+local perfectFireRate = {
+    enabled = false,
+    modules = {},
+}
+
+-- scan + update cache (ONLY occasionally)
+local function refreshModules()
+    for _, Module in next, getgc(true) do
+        if type(Module) == "table" and rawget(Module, "maxammo") then
+            if not table.find(perfectFireRate.modules, Module) then
+                table.insert(perfectFireRate.modules, Module)
+            end
+        end
+    end
+end
+
+local function applyFireRate()
+    for _, Module in ipairs(perfectFireRate.modules) do
+        Module.waittime = 0
+    end
+end
+
+local function enablePerfectFR()
+    perfectFireRate.enabled = true
+
+    -- initial scan
+    refreshModules()
+    applyFireRate()
+
+    task.spawn(function()
+        while perfectFireRate.enabled do
+            applyFireRate()
+
+            -- only scan for NEW guns occasionally (not every frame)
+            refreshModules()
+
+            task.wait(1) -- 🔥 VERY IMPORTANT (low cost)
+        end
+    end)
+end
+
+local function disablePerfectFR()
+    perfectFireRate.enabled = false
+end
+
     local L = MiscTab:Section({Name="Weapon mods", Side="Left"})
 
 	L:Toggle({
@@ -1980,6 +2102,19 @@ do
             coroutine.wrap(mainLoop)()
         else
             cleanup()
+        end
+    end
+})
+
+L:Toggle({
+    Name = "Rapid Fire",
+    Flag = "KW_PERFECT_FR",
+    Default = false,
+    Callback = function(v)
+        if v then
+            enablePerfectFR()
+        else
+            disablePerfectFR()
         end
     end
 })
@@ -2532,15 +2667,83 @@ end
 LP.CharacterAdded:Connect(onRespawn)
 
     local BL = World:Section({Name="Loadout", Side="Left"})
-    BL:Button({Name="Equip Loadout", Callback=function()
-        local commandFunction = LP:WaitForChild("PlayerGui"):WaitForChild("ChatConsoleGui"):WaitForChild("CommandFunction")
-        commandFunction:InvokeServer("!sts ak+eo+ang+pbs sop+eo+ang+pbs mac+blue+acog+ext+sup r7+hunt+pbs+blue wrench medkit")
+
+-- =========================
+-- LOADOUT DATA
+-- =========================
+local loadouts = {
+    ["Withdraw Loadout"] = "!sts ak+eo+ang+pbs sop+eo+ang+pbs mac+blue+acog+ext+sup r7+hunt+pbs+blue wrench medkit",
+
+    ["Sniper (EG)"] = "!sts gm+pro+heavy+erg+range fn+acog+range+muzz+red med def",
+
+    ["Max (operator01215)"] = "!sts mk18+ergo+pbs+jg mk18+ergo+pbs+ref med med nv",
+
+    ["Rocket's first loadout"] = "!sts hk416+holo+muzz+ergo+red+unf mp7+taa+holo+red+ergo m870+muzz+angled intervention+acog+muzz+fold med nv",
+
+    ["Zero Recoil Laser (EG)"] = "!sts hk416+holo+muzz+ergo+unf m4a1+holo+muzz+ergo mp7+taa+holo+ergo p90+holo+ergo med nv",
+
+    ["Headshot Machine(EG)"] = "!sts scarh+holo+muzz+ergo ak74+holo+muzz+ergo hk416+holo+ergo mp7+taa+ergo med nv",
+
+    ["SMG Rush (EG)"] = "!sts mp7+taa+holo+ergo krissvector+holo+ergo p90+holo+ergo ump45+holo+ergo med nv",
+
+    ["Easy Tracking (EG)"] = "!sts hk416+red+muzz+ergo m4a1+red+muzz+ergo mp7+taa+red+ergo aug+holo+ergo med nv",
+
+    ["Rockets Meta"] = "!sts hk416+holo+muzz+ergo+unf scarh+holo+muzz+ergo krissvector+holo+ergo m4a1+holo+ergo scar-h+hol+her+muzzle ar+heav+skel+cl6+ngal med med defib nv"
+}
+
+-- =========================
+-- CURRENT SELECTION
+-- =========================
+local selectedLoadout = "OG Loadout"
+
+-- =========================
+-- DROPDOWN
+-- =========================
+BL:Dropdown({
+    Name = "Select Loadout",
+    Flag = "KW_LOADOUT_SELECT",
+    Content = {
+        "Withdraw Loadout",
+        "Sniper (EG)",
+        "Max (operator01215)",
+        "Rocket's first loadout",
+        "Zero Recoil Laser (EG)",
+        "Headshot Machine (EG)",
+        "SMG Rush (EG)",
+        "Easy Tracking (EG)",
+        "Rockets Meta"
+    },
+    Default = "OG Loadout",
+    Callback = function(v)
+        selectedLoadout = v
+    end
+})
+
+-- =========================
+-- EQUIP BUTTON
+-- =========================
+BL:Button({
+    Name = "Equip Selected Loadout",
+    Callback = function()
+        local commandFunction = LP:WaitForChild("PlayerGui")
+            :WaitForChild("ChatConsoleGui")
+            :WaitForChild("CommandFunction")
+
+        local cmd = loadouts[selectedLoadout]
+        if cmd then
+            commandFunction:InvokeServer(cmd)
+        end
+
+        -- force respawn to apply
         local character = LP.Character
         if character then
             local humanoid = character:FindFirstChildOfClass("Humanoid")
-            if humanoid then humanoid.Health = 0 end
+            if humanoid then
+                humanoid.Health = 0
+            end
         end
-    end})
+    end
+})
 
 	local AA = World:Section({Name="Auto Armor", Side="Right"})
 
@@ -2859,7 +3062,13 @@ V:Colorpicker({
     F:Toggle({Name="Team Check", Flag="KW_SA_TC", Default=silentAim.teamCheck, Callback=function(v) silentAim.teamCheck=v end})
     F:Toggle({Name="Wall Check", Flag="KW_SA_WC", Default=silentAim.wallCheck, Callback=function(v) silentAim.wallCheck=v end})
     F:Toggle({Name="Ignore Passive", Flag="KW_SA_PI", Default=silentAim.passiveIgnore, Callback=function(v) silentAim.passiveIgnore=v end})
-    F:Dropdown({Name="Target Part", Flag="KW_SA_TP", Content={"Head", "Torso", "Right Arm", "Left Arm", "Right Leg", "Left Leg"}, Default=silentAim.targetPart, Callback=function(v) silentAim.targetPart=v end})
+    F:Slider({Name="Headshot Chance (%)", Flag="KW_SA_HS", Default=silentAim.headshotPercent, Min=0, Max=100, Callback=function(v) silentAim.headshotPercent=math.floor(v) end})
+    F:Toggle({Name="Scan Head", Flag="KW_SA_SCAN_HEAD", Default=silentAim.scanParts.Head, Callback=function(v) silentAim.scanParts.Head=v end})
+    F:Toggle({Name="Scan Torso", Flag="KW_SA_SCAN_TORSO", Default=silentAim.scanParts.Torso, Callback=function(v) silentAim.scanParts.Torso=v end})
+    F:Toggle({Name="Scan Right Arm", Flag="KW_SA_SCAN_RA", Default=silentAim.scanParts["Right Arm"], Callback=function(v) silentAim.scanParts["Right Arm"]=v end})
+    F:Toggle({Name="Scan Left Arm", Flag="KW_SA_SCAN_LA", Default=silentAim.scanParts["Left Arm"], Callback=function(v) silentAim.scanParts["Left Arm"]=v end})
+    F:Toggle({Name="Scan Right Leg", Flag="KW_SA_SCAN_RL", Default=silentAim.scanParts["Right Leg"], Callback=function(v) silentAim.scanParts["Right Leg"]=v end})
+    F:Toggle({Name="Scan Left Leg", Flag="KW_SA_SCAN_LL", Default=silentAim.scanParts["Left Leg"], Callback=function(v) silentAim.scanParts["Left Leg"]=v end})
     F:Slider({Name="Min HP to Lock", Flag="KW_SA_MHP", Default=1, Min=0, Max=100, Callback=function(v) silentAim.minHPToLock=math.max(0, math.floor(v)) end})
     F:Slider({Name="Select Interval (ms)", Flag="KW_SA_SI", Default=math.floor(silentAim.selectInterval*1000), Min=30, Max=200, Callback=function(v) silentAim.selectInterval=clamp(v/1000,0.03,0.2) end})
 
@@ -2902,6 +3111,7 @@ end
 RunService.RenderStepped:Connect(function()
     if not silentAim.enabled then
         silentAim.FinalTarget = nil
+        silentAim.currentPart = nil
 
         if aim.fovCircle then
             aim.fovCircle.Visible = (aim.enabled or silentAim.enabled) and not getgenv().KW_HIDE_FOV
@@ -2915,6 +3125,8 @@ RunService.RenderStepped:Connect(function()
     end
 
     local mousePos = UIS:GetMouseLocation()
+    local rmbDown = UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+    local forceRescan = rmbDown
 
     -- VALIDATE TARGET
     local isFinalTargetValid = false
@@ -2924,12 +3136,15 @@ RunService.RenderStepped:Connect(function()
         local char = current.Character
         local hum = char:FindFirstChildOfClass("Humanoid")
 
-        local targetPart = silentAim.targetPart
-        if silentAim.rage.enabled and silentAim.rage.headOnly then
-            targetPart = "Head"
+        local part = silentAim.currentPart
+        if forceRescan or not part or not part:IsDescendantOf(char) then
+            local partName
+            part, partName = getSilentTargetPart(char, mousePos)
+            silentAim.currentPart = part
+            if partName then
+                silentAim.selectedPartName = partName
+            end
         end
-
-        local part = char:FindFirstChild(targetPart) or char:FindFirstChild("HumanoidRootPart")
 
         if hum and validSilentHealth(hum) and part then
             local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
@@ -2947,11 +3162,14 @@ RunService.RenderStepped:Connect(function()
     -- FIND NEW TARGET
     if not isFinalTargetValid then
         silentAim.FinalTarget = nil
+        silentAim.currentPart = nil
 
-        if tick() - silentAim.lastSelect >= silentAim.selectInterval then
+        if forceRescan or (tick() - silentAim.lastSelect >= silentAim.selectInterval) then
             silentAim.lastSelect = tick()
 
             local bestTarget = nil
+            local bestPart = nil
+            local bestPartName = nil
             local bestDist = math.huge
 
             for _, Player in ipairs(Players:GetPlayers()) do
@@ -2962,7 +3180,7 @@ RunService.RenderStepped:Connect(function()
 
                     local char = Player.Character
                     local hum = char:FindFirstChildOfClass("Humanoid")
-                    local part = char:FindFirstChild(silentAim.targetPart) or char:FindFirstChild("HumanoidRootPart")
+                    local part, partName = getSilentTargetPart(char, mousePos)
 
                     if hum and validSilentHealth(hum) and part and not char:FindFirstChild("ForceField") then
                         local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
@@ -2978,6 +3196,8 @@ RunService.RenderStepped:Connect(function()
                                     if dist < bestDist then
                                         bestDist = dist
                                         bestTarget = Player
+                                        bestPart = part
+                                        bestPartName = partName
                                     end
                                 end
                             end
@@ -2987,6 +3207,10 @@ RunService.RenderStepped:Connect(function()
             end
 
             silentAim.FinalTarget = bestTarget
+            silentAim.currentPart = bestPart
+            if bestPartName then
+                silentAim.selectedPartName = bestPartName
+            end
         end
     end
 
@@ -2998,7 +3222,8 @@ RunService.RenderStepped:Connect(function()
         and silentAim.FinalTarget.Character then
 
             local char = silentAim.FinalTarget.Character
-            local part = char:FindFirstChild(silentAim.targetPart)
+            local part = silentAim.currentPart
+                or char:FindFirstChild(silentAim.selectedPartName or silentAim.targetPart)
                 or char:FindFirstChild("HumanoidRootPart")
 
             if part then
